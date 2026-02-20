@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual Environment
+venv/
+.venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Data cache (regenerated from API)
+data/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Distribution
+dist/
+build/
+*.egg-info/
