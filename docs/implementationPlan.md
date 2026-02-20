@@ -114,3 +114,20 @@ class MarketData:
 ### Manual Verification
 - Compare fetched OHLC data against TradingView chart for a known date range.
 - Verify VaR calculations against manual spreadsheet.
+
+---
+
+## Strategic Perspective: Numeric vs. Visual Analysis
+
+The current framework prioritizes the **Numeric & Rule-Based Approach** (Signal Processing) for Phase 2 and 3. However, the architecture is designed to accommodate a potential pivot to **Visual / Computer Vision (CV)** based analysis if needed in future versions.
+
+### Current Choice: Numeric (Signal Processing)
+- **Mechanism:** OHLCV data $\rightarrow$ Confluence Rules (RSI, Bollinger, etc.) $\rightarrow$ Signals.
+- **Why:** Faster backtesting, objective mathematical ground truth, and lower computational overhead.
+
+### Future Potential: Visual (AI / Computer Vision)
+- **Mechanism:** OHLCV data $\rightarrow$ Chart Image/GAF Matrix $\rightarrow$ CNN/Deep Learning Model $\rightarrow$ Pattern Recognition.
+- **Why:** Can capture nuanced "market texture" that is hard to define with simple IF-THEN rules.
+
+> [!NOTE]
+> The Layered Provider architecture in `marketData.py` ensures that regardless of the mathematical perspective (Numeric or Visual), the underlying data stream remains the definitive "Single Source of Truth."
