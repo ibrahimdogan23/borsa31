@@ -79,12 +79,81 @@ class MarketData:
 
 ---
 
-## Phase 2: Statistical Arbitrage & Mean Reversion
+## Phase 2: Statistical Arbitrage & Mean Reversion (`statisticalArbitrage.py`)
 
 #### [NEW] [statisticalArbitrage.py](file:///c:/Users/ibrah/PycharmProjects/borsa31/statisticalArbitrage.py)
-- `adfTest` — Augmented Dickey-Fuller for stationarity.
-- `cointegrationTest` — Engle-Granger for pair validation.
-- `zScore` — Entry/exit signal generation for mean-reversion.
+
+### Why This Phase Exists
+
+In the BIST market, which is characterized by **higher volatility** and **lower efficiency** than US markets, mean-reversion strategies—specifically **Pairs Trading**—often yield superior risk-adjusted returns. Price series are typically non-stationary (Random Walks), so we cannot run regressions directly on prices. Instead, we look for pairs of assets whose **spread** is stationary (mean-reverting), meaning the pair is "tied together by a rubber band."
+
+> [!IMPORTANT]
+> Always use the **natural log of prices** (`ln(adjClose)`) when testing for cointegration. This ensures spreads represent **percentage deviations** rather than absolute TL differences, which is critical for BIST where nominal prices vary widely.
+
+### 3-Layer Architecture
+
+#### Layer 1: Math Core — Pure, Stateless Functions
+
+Deterministic mathematical building blocks with no side effects.
+
+| Function | What It Does | Why |
+|---|---|---|
+| `calculateLogReturns(series)` | $r_t = \ln(P_t / P_{t-1})$ | Log-returns are additive across time and normally distributed — required for Z-score validity. |
+| `calculateSpread(seriesA, seriesB, hedgeRatio)` | $z_t = \ln(P_A) - \gamma \cdot \ln(P_B)$ | The "rubber band" between two assets. If stationary, this is where profit lives. |
+| `calculateZScore(spread, window)` | $Z = (z_t - \mu_{rolling}) / \sigma_{rolling}$ | Normalizes the spread to standard deviations from the rolling mean. |
+| `calculateHurst(series)` | Rescaled Range (R/S) analysis → $H$ exponent | **Quality filter**: $H<0.5$ = mean-reverting, $H=0.5$ = random walk, $H>0.5$ = trending. ADF says "yes/no"; Hurst says "how strongly." |
+
+> [!NOTE]
+> The Hurst Exponent serves as a **regime filter**. If $H$ climbs toward 0.5, the cointegration "rubber band" has snapped and trading should stop — regardless of what the ADF test says.
+
+#### Layer 2: Statistical Tests — Scientific Validation
+
+Functions that validate whether a pair is mathematically viable for trading.
+
+| Function | What It Does | Why |
+|---|---|---|
+| `runAdfTest(series)` | Augmented Dickey-Fuller test → `(isStationary: bool, pValue: float)` | Rejects the null hypothesis of a unit root. $p < 0.05$ = stationary. |
+| `runCointegrationTest(seriesA, seriesB)` | OLS regression $y_1 = \gamma y_2 + \mu + \epsilon$, then ADF on residuals $\epsilon_t$ | If residuals are stationary → the pair is cointegrated. Returns hedge ratio $\gamma$ and test results. |
+| `calculateRollingHedgeRatio(seriesA, seriesB, window)` | Rolling OLS via `statsmodels.regression.rolling.RollingOLS` | **BIST-specific**: A static $\gamma$ breaks during macro regime shifts (TCMB decisions, inflation data). A **60-day rolling window** adapts dynamically. |
+
+**Why 60-day rolling window?**
+- **20 days**: Too short — captures market noise, not structure.
+- **60 days**: ~3 months — matches BIST's typical "regime duration" between major macro events.
+- **120 days**: Too slow — fails to adapt to Turkey's frequent policy shifts.
+
+#### Layer 3: PairAnalyzer — Facade & Logic Gate
+
+The single public API that orchestrates discovery, validation, and signal generation.
+
+| Function | What It Does | Why |
+|---|---|---|
+| `findCointegratedPairs(universe, startDate, endDate)` | Iterates all combinations, runs cointegration test, filters by Hurst < 0.5 | Automated discovery of viable pairs from a stock universe. |
+| `analyzePair(symbolA, symbolB)` | Full diagnostic: hedge ratio, ADF, Hurst, current Z-score | One-call summary of a specific pair's health. |
+| `generateSignals(spread, window, entryZ, exitZ, stopLossZ)` | Entry/exit/stop-loss signal generation | The trading logic engine. |
+
+**Signal Logic (Z-Score thresholds):**
+
+| Z-Score | Action | Rationale |
+|---|---|---|
+| $Z > +2.0$ | **Sell spread** (Short $y_1$, Long $y_2$) | Spread is 2σ above mean — expect reversion. |
+| $Z < -2.0$ | **Buy spread** (Long $y_1$, Short $y_2$) | Spread is 2σ below mean — expect reversion. |
+| $Z \approx 0$ | **Exit position** | Mean reached — take profit. |
+| $|Z| > 3.5$ | **⛔ Stop-Loss** | Structural break — cointegration assumption has failed ($<0.05\%$ probability under normal distribution). |
+
+> [!WARNING]
+> The $\pm 3.5$ stop-loss is embedded directly in `generateSignals()` rather than deferred to Phase 4. This ensures the PairAnalyzer never blindly waits for a mean reversion that may never come.
+
+**Sector Overlap Warning:**
+`findCointegratedPairs()` includes a **sector overlap check**. If multiple discovered pairs come from the same sector (e.g., AKBNK-ISCTR + GARAN-AKBNK = both Banking), a warning is logged. The actual position-level correlation limit (e.g., "max 40% in one sector") is deferred to Phase 4 (`riskManagement.py`).
+
+### BIST-Specific Engineering Considerations
+
+| Consideration | Implementation |
+|---|---|
+| **Sector-Based Pairing** | Focus on same-sector stocks (AKBNK vs ISCTR, KOZAL vs KOZAA) that share long-term economic equilibrium. |
+| **Minimum Volume Filter** | Use Phase 1 `volume` data to exclude illiquid stocks — a pair may look cointegrated but be untradeable if one leg has no liquidity. |
+| **Rolling Parameters** | All windows default to 60 days to match BIST regime dynamics. |
+| **Log Prices** | All cointegration tests use `ln(adjClose)` to avoid nominal price bias. |
 
 ---
 
@@ -101,15 +170,23 @@ class MarketData:
 #### [NEW] [riskManagement.py](file:///c:/Users/ibrah/PycharmProjects/borsa31/riskManagement.py)
 - `kellyCriterion` — Optimal position sizing.
 - `valueAtRisk` — Portfolio maximum loss boundary.
+- **Sector correlation limit** — Enforces portfolio-level diversification (max % per sector).
 
 ---
 
 ## Verification Plan
 
-### Automated Tests
-- Run `marketData.py` to verify data retrieval + contract validation for `THYAO.IS`.
-- Unit tests for `zScore` and `kellyCriterion` with hardcoded values.
+### Phase 1 Tests
+- Run `marketData.py` self-test: data retrieval + contract validation for `THYAO.IS`.
 - Cache invalidation test: change cleaner version → verify re-fetch.
+
+### Phase 2 Tests
+
+| Stage | What | How |
+|---|---|---|
+| **Unit Test** | Math Core correctness | Hardcoded inputs → `calculateZScore([1,2,3])` must equal expected value. `calculateHurst()` on synthetic mean-reverting series must return $H < 0.5$. |
+| **Integration Test** | Full pipeline on real BIST data | Load `AKBNK` + `ISCTR` via Phase 1 → run `runCointegrationTest()` → verify hedge ratio and p-value are plausible. |
+| **Sanity Check** | Visual validation | Plot Z-score with `matplotlib` → Z should "bounce" between $\pm 2.0$ bands. If it trends constantly, cointegration has failed. |
 
 ### Manual Verification
 - Compare fetched OHLC data against TradingView chart for a known date range.
